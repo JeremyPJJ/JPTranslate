@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
 
     <style name="Theme.Traductor" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">#090F24</item>
         <item name="android:statusBarColor">#090F24</item>
         <item name="android:navigationBarColor">#090F24</item>
+        <item name="android:windowSplashScreenAnimatedIcon" tools:targetApi="31">@android:color/transparent</item>
+        <item name="android:windowSplashScreenBackground" tools:targetApi="31">#090F24</item>
     </style>
 </resources>
