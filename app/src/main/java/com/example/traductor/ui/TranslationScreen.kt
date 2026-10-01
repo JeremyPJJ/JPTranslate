@@ -5,8 +5,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -14,9 +17,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -26,6 +32,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -33,6 +40,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.traductor.R
+import com.example.traductor.data.ocr.ImageUtils
 import com.example.traductor.domain.model.Language
 import com.example.traductor.domain.model.TranslationItem
 import com.example.traductor.ui.theme.*
@@ -50,9 +58,37 @@ fun TranslationScreen(viewModel: TranslationViewModel) {
     var showSourceLangDialog by remember { mutableStateOf(false) }
     var showTargetLangDialog by remember { mutableStateOf(false) }
     var showCapabilitiesDialog by remember { mutableStateOf(false) }
+    var showImageSourceDialog by remember { mutableStateOf(false) }
+    var currentCameraUri by remember { mutableStateOf<Uri?>(null) }
 
     LaunchedEffect(Unit) {
         viewModel.refreshCapabilities(context)
+    }
+
+    val galleryLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia()
+    ) { uri: Uri? ->
+        uri?.let { viewModel.processImageForTranslation(context, it) }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.TakePicture()
+    ) { success: Boolean ->
+        if (success) {
+            currentCameraUri?.let { viewModel.processImageForTranslation(context, it) }
+        }
+    }
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        if (isGranted) {
+            val uri = ImageUtils.createTempImageUri(context)
+            currentCameraUri = uri
+            cameraLauncher.launch(uri)
+        } else {
+            viewModel.setErrorMessage("Permiso de cámara denegado.")
+        }
     }
 
     val micPermissionLauncher = rememberLauncherForActivityResult(
@@ -168,6 +204,7 @@ fun TranslationScreen(viewModel: TranslationViewModel) {
                         viewModel = viewModel,
                         onOpenSourceDialog = { showSourceLangDialog = true },
                         onOpenTargetDialog = { showTargetLangDialog = true },
+                        onOpenImageDialog = { showImageSourceDialog = true },
                         onMicClick = {
                             val permission = Manifest.permission.RECORD_AUDIO
                             viewModel.refreshCapabilities(context)
@@ -215,6 +252,82 @@ fun TranslationScreen(viewModel: TranslationViewModel) {
         )
     }
 
+    if (showImageSourceDialog) {
+        AlertDialog(
+            onDismissRequest = { showImageSourceDialog = false },
+            containerColor = NavySurface,
+            title = { Text("📷 Traducir imagen", color = Color.White, fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showImageSourceDialog = false
+                                val permission = Manifest.permission.CAMERA
+                                if (ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED) {
+                                    val uri = ImageUtils.createTempImageUri(context)
+                                    currentCameraUri = uri
+                                    cameraLauncher.launch(uri)
+                                } else {
+                                    cameraPermissionLauncher.launch(permission)
+                                }
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF162548))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(Icons.Default.PhotoCamera, contentDescription = null, tint = ElectricBlue)
+                            Text("Tomar foto con la Cámara", fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showImageSourceDialog = false
+                                galleryLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF162548))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(Icons.Default.PhotoLibrary, contentDescription = null, tint = ElectricBlue)
+                            Text("Seleccionar de la Galería", fontWeight = FontWeight.SemiBold, color = Color.White)
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showImageSourceDialog = false }) {
+                    Text("Cancelar", color = ElectricBlue)
+                }
+            }
+        )
+    }
+
+    // Full Screen Image Translation Result View
+    if (uiState.showImageTranslationDialog && uiState.imageOcrText != null && uiState.imageTranslationText != null) {
+        ImageTranslationResultScreen(
+            uiState = uiState,
+            viewModel = viewModel,
+            onClose = { viewModel.closeImageTranslationDialog() },
+            onCopy = { text -> clipboardManager.setPrimaryClip(ClipData.newPlainText("Traducción de Imagen", text)) },
+            onChangeLanguage = { viewModel.toggleImageTargetLanguage() }
+        )
+    }
+
     if (showCapabilitiesDialog) {
         val caps = uiState.capabilities
         AlertDialog(
@@ -232,6 +345,10 @@ fun TranslationScreen(viewModel: TranslationViewModel) {
                     Text("Reconocimiento de voz (Vosk Offline):", fontWeight = FontWeight.Bold, color = ElectricBlue)
                     Text(if (caps.micPermission) "✓ RECORD_AUDIO permitido" else "✗ RECORD_AUDIO denegado", color = Color.White)
                     Text(if (uiState.isModelsDownloaded) "✓ Modelos Vosk descargados y listos" else "✗ Modelos Vosk pendientes (Toca el botón ⬇️)", color = Color.White)
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("OCR Imagen (ML Kit Offline):", fontWeight = FontWeight.Bold, color = ElectricBlue)
+                    Text("✓ Reconocimiento de texto en imágenes listo", color = Color.White)
                 }
             },
             confirmButton = {
@@ -250,12 +367,416 @@ fun TranslationScreen(viewModel: TranslationViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ImageTranslationResultScreen(
+    uiState: TranslationUiState,
+    viewModel: TranslationViewModel,
+    onClose: () -> Unit,
+    onCopy: (String) -> Unit,
+    onChangeLanguage: () -> Unit
+) {
+    val context = LocalContext.current
+    val bitmap = remember(uiState.selectedImageUri) {
+        uiState.selectedImageUri?.let { uri ->
+            ImageUtils.loadAndResizeBitmap(context, uri, maxDimension = 800)
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(Color(0xFF070D1B), Color(0xFF0B1528), Color(0xFF070D1B))
+                )
+            )
+            .statusBarsPadding()
+            .navigationBarsPadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            // Header Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    IconButton(onClick = onClose) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Volver",
+                            tint = Color.White
+                        )
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0xFF1D4ED8)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Image,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+
+                    Column {
+                        Text(
+                            text = "Traducción de Imagen",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 17.sp,
+                            color = Color.White
+                        )
+                        Text(
+                            text = "Texto detectado • Traducido offline",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8)
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF064E3B),
+                    border = BorderStroke(1.dp, Color(0xFF059669))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF34D399),
+                            modifier = Modifier.size(13.dp)
+                        )
+                        Text(
+                            text = "Modo offline",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF34D399)
+                        )
+                    }
+                }
+            }
+
+            // Scrollable Content Cards
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Image Preview Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F182E)),
+                    border = BorderStroke(1.dp, Color(0xFF1E3A8A))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(200.dp)
+                    ) {
+                        if (bitmap != null) {
+                            Image(
+                                bitmap = bitmap.asImageBitmap(),
+                                contentDescription = "Imagen procesada",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .clip(RoundedCornerShape(20.dp))
+                            )
+                        } else {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("Vista previa de la imagen", color = Color(0xFF64748B))
+                            }
+                        }
+
+                        Surface(
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(12.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xCC090F24)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Image,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Text("Imagen", fontSize = 12.sp, color = Color.White, fontWeight = FontWeight.Medium)
+                            }
+                        }
+                    }
+                }
+
+                // OCR Detected Text Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F182E)),
+                    border = BorderStroke(1.dp, Color(0xFF1E3A8A))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF1E3A8A)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.CenterFocusWeak,
+                                        contentDescription = null,
+                                        tint = Color(0xFF60A5FA),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Texto detectado (OCR)",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 15.sp
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF162548)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Translate,
+                                        contentDescription = null,
+                                        tint = Color(0xFF60A5FA),
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Text(
+                                        text = "${uiState.sourceLanguage.displayName} (detectado)",
+                                        fontSize = 11.sp,
+                                        color = Color(0xFF93C5FD),
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF0A1020)),
+                            border = BorderStroke(1.dp, Color(0xFF1E293B))
+                        ) {
+                            Text(
+                                text = uiState.imageOcrText ?: "",
+                                color = Color(0xFFE2E8F0),
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                modifier = Modifier.padding(12.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Translation Card
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F182E)),
+                    border = BorderStroke(1.dp, Color(0xFF0D9488))
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(32.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0F766E)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.SwapCalls,
+                                        contentDescription = null,
+                                        tint = Color(0xFF2DD4BF),
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                                Text(
+                                    text = "Traducción al ${uiState.targetLanguage.displayName}",
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.White,
+                                    fontSize = 15.sp
+                                )
+                            }
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFF115E59)
+                            ) {
+                                Text(
+                                    text = "${uiState.targetLanguage.flag} ${uiState.targetLanguage.displayName}",
+                                    fontSize = 12.sp,
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF061E1C)),
+                            border = BorderStroke(1.dp, Color(0xFF0D9488))
+                        ) {
+                            Box(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
+                                if (uiState.isLoading) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.align(Alignment.Center).size(24.dp),
+                                        color = Color(0xFF2DD4BF),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Text(
+                                        text = uiState.imageTranslationText ?: "",
+                                        color = Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        lineHeight = 22.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Bottom Action Bar (Row of 3 Pill Buttons)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { viewModel.speakImageTranslation() },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color(0xFF2563EB)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = if (uiState.isSpeaking) Color(0xFF1E3A8A) else Color(0xFF1D4ED8),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = if (uiState.isSpeaking) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (uiState.isSpeaking) "Pausar" else "Escuchar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = { onCopy(uiState.imageTranslationText ?: "") },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color(0xFF2563EB)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color(0xFF1D4ED8),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Copiar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+
+                OutlinedButton(
+                    onClick = onChangeLanguage,
+                    modifier = Modifier.weight(1.2f),
+                    shape = RoundedCornerShape(24.dp),
+                    border = BorderStroke(1.dp, Color(0xFF3B82F6)),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = Color(0xFF1E293B),
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Translate,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = Color(0xFF60A5FA)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Cambiar idioma", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun TranslateTabContent(
     uiState: TranslationUiState,
     viewModel: TranslationViewModel,
     onOpenSourceDialog: () -> Unit,
     onOpenTargetDialog: () -> Unit,
+    onOpenImageDialog: () -> Unit,
     onMicClick: () -> Unit,
     onCopy: (String) -> Unit
 ) {
@@ -328,6 +849,36 @@ fun TranslateTabContent(
             }
         }
 
+        // Image Translation Banner Button
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onOpenImageDialog() }
+                .border(1.dp, ElectricBlue, RoundedCornerShape(16.dp)),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF162548))
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(Icons.Default.CenterFocusWeak, contentDescription = null, tint = ElectricBlue, modifier = Modifier.size(24.dp))
+                    Column {
+                        Text("📷 Traducir imagen", fontWeight = FontWeight.Bold, color = Color.White, fontSize = 15.sp)
+                        Text("Captura o selecciona fotos para traducir offline", fontSize = 12.sp, color = Color(0xFF94A3B8))
+                    }
+                }
+                Icon(Icons.Default.ChevronRight, contentDescription = null, tint = ElectricBlue)
+            }
+        }
+
         if (uiState.errorMessage != null) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF7F1D1D)),
@@ -356,7 +907,7 @@ fun TranslateTabContent(
             }
         }
 
-        if (uiState.isDownloadingModel) {
+        if (uiState.isDownloadingModel || uiState.isAnalyzingImage) {
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1B4B)),
                 shape = RoundedCornerShape(16.dp)
@@ -439,7 +990,12 @@ fun TranslateTabContent(
                                 .clickable { viewModel.speakSource() },
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.VolumeUp, contentDescription = "Escuchar original", tint = ElectricBlue, modifier = Modifier.size(20.dp))
+                            Icon(
+                                imageVector = if (uiState.isSpeaking) Icons.Default.Pause else Icons.Default.VolumeUp,
+                                contentDescription = "Escuchar original",
+                                tint = ElectricBlue,
+                                modifier = Modifier.size(20.dp)
+                            )
                         }
                     }
 
@@ -530,7 +1086,7 @@ fun TranslateTabContent(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                Icons.Default.VolumeUp,
+                                imageVector = if (uiState.isSpeaking) Icons.Default.Pause else Icons.Default.VolumeUp,
                                 contentDescription = "Escuchar traducción",
                                 tint = if (uiState.translatedText.isNotEmpty()) ElectricBlue else Color(0xFF475569),
                                 modifier = Modifier.size(20.dp)

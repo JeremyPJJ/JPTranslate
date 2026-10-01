@@ -101,6 +101,32 @@ class TextToSpeechHelper(private val context: Context) {
         }
     }
 
+    fun isSpeaking(): Boolean {
+        return try {
+            tts?.isSpeaking == true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    fun stop() {
+        try {
+            tts?.stop()
+        } catch (e: Exception) {
+            Log.e("TTS", "Error stopping TTS", e)
+        }
+    }
+
+    fun speakOrStop(text: String, languageCode: String): Boolean {
+        if (isSpeaking()) {
+            stop()
+            return false
+        } else {
+            speak(text, languageCode)
+            return true
+        }
+    }
+
     fun speak(text: String, languageCode: String) {
         if (text.isBlank()) {
             onError?.invoke("No hay texto para reproducir.")
@@ -162,7 +188,7 @@ class TextToSpeechHelper(private val context: Context) {
     }
 
     fun shutdown() {
-        tts?.stop()
+        stop()
         tts?.shutdown()
     }
 }

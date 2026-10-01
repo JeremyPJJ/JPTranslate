@@ -37,4 +37,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onPause() {
+        super.onPause()
+        viewModel.stopAudio()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        viewModel.stopAudio()
+    }
 }
